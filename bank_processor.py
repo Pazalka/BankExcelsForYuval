@@ -28,7 +28,7 @@ def create_output_template(workbook, worksheet):
     # Row 1 - חותרות חברות
     worksheet.write(0, 0, 'חברה', header_format)
     worksheet.write(0, 1, 'רומי')
-    worksheet.write(0, 2, 'רומי') 
+    worksheet.write(0, 2, 'יובל') 
     worksheet.write(0, 3, 'החזקות')
     worksheet.write(0, 4, 'החזקות')
     worksheet.write(0, 5, 'נדלן')
@@ -54,7 +54,7 @@ def create_output_template(workbook, worksheet):
     # Row 3 - שם הבנק
     worksheet.write(2, 0, 'שם הבנק', header_format)
     worksheet.write(2, 1, 'מזרחי')
-    worksheet.write(2, 2, 'מזרחי')
+    worksheet.write(2, 2, 'לאומי')
     worksheet.write(2, 3, 'פועלים')
     worksheet.write(2, 4, 'מזרחי')
     worksheet.write(2, 5, 'מזרחי')
@@ -64,7 +64,7 @@ def create_output_template(workbook, worksheet):
     worksheet.write(2, 9, 'פועלים')
     
     # Row 4 - מספר ח-ן
-    account_numbers = ['193744', '197154', '31324', '177315', '172615', '153771129', '313222', '409937', '55533']
+    account_numbers = ['193744', '4089044', '31324', '177315', '172615', '153771129', '313222', '409937', '55533']
     worksheet.write(3, 0, 'מספר ח-ן', header_format)
     for col, number in enumerate(account_numbers, start=1):
         worksheet.write(3, col, number, green_format)
@@ -74,12 +74,24 @@ def create_output_template(workbook, worksheet):
 
 def find_account_number(sheet):
     """מוצא את מספר החשבון בגיליון"""
+    bank_keywords = ['מזרחי', 'פועלים', 'דיסקונט', 'לאומי']
+    
     for row in range(1, sheet.max_row + 1):
-        cell_value = sheet.cell(row=row, column=2).value
-        if cell_value and 'מזרחי' in str(cell_value):
-            account_number = str(cell_value).split()[-1]
-            print(f"נמצא מספר חשבון: {account_number} בשורה {row} עמודה 2")
-            return account_number
+        cell_value = str(sheet.cell(row=row, column=2).value or '')
+        print(f"בודק תא: {cell_value}")  # לוג לדיבוג
+        
+        # מחפש את כל סוגי הבנקים
+        if any(bank in cell_value for bank in bank_keywords):
+            # מחפש מספר בתוך הטקסט
+            words = cell_value.split()
+            for word in words:
+                # בודק אם המילה מכילה רק מספרים ולפחות 5 ספרות
+                if word.isdigit() and len(word) >= 5:
+                    print(f"נמצא מספר חשבון: {word} בשורה {row} עמודה 2")
+                    return word
+            
+            print(f"נמצא בנק אבל לא מספר חשבון בתא: {cell_value}")
+            
     raise ValueError("לא נמצא מספר חשבון בקובץ")
 
 def find_output_column(account_number, account_numbers):
@@ -90,57 +102,101 @@ def find_output_column(account_number, account_numbers):
             return col
     raise ValueError(f"לא נמצא חשבון מתאים {account_number}")
 
-def process_bank_file(input_file, worksheet, account_numbers, workbook):
-    input_wb = openpyxl.load_workbook(input_file)
-    input_sheet = input_wb.active
+def collect_all_dates(bank_files):
+    """אוסף את כל התאריכים מכל הקבצים"""
+    all_dates = set()
     
-    # מציאת מספר חשבון והעמודה המתאימה
-    account_number = find_account_number(input_sheet)
-    output_col = find_output_column(account_number, account_numbers)
-    
-    # מילון לשמירת היתרה האחרונה לכל תאריך
-    balances_by_date = {}
-    
-    # קריאת כל היתרות ושמירת האחרונה לכל תאריך
-    for row in range(10, input_sheet.max_row + 1):
-        date_cell = input_sheet.cell(row=row, column=1).value
-        balance_cell = input_sheet.cell(row=row, column=10).value
+    for input_file in bank_files:
+        wb = openpyxl.load_workbook(input_file)
+        sheet = wb.active
         
-        if isinstance(date_cell, str) and isinstance(balance_cell, (int, float)):
-            balances_by_date[date_cell] = balance_cell
-    
-    # המרת המפתחות למילון חדש עם תאריכים במקום מחרוזות
-    sorted_dates = {}
-    for date_str, balance in balances_by_date.items():
-        try:
-            actual_date = datetime.strptime(date_str, '%d/%m/%y')
-            sorted_dates[actual_date] = balance
-        except ValueError as e:
-            print(f"שגיאה בהמרת תאריך {date_str}: {e}")
-            continue
-    
-    # כתיבת היתרות לקובץ הפלט
-    next_row = 4
-    date_format = workbook.add_format({'num_format': 'dd/mm/yy'})
-    number_format = workbook.add_format({'num_format': '#,##0.00'})
-    
-    # מיון לפי תאריכים אמיתיים
-    for date in sorted(sorted_dates.keys()):
-        balance = sorted_dates[date]
-        print(f"כותב לשורה {next_row + 1}:")
-        print(f"תאריך {date.strftime('%d/%m/%y')} בעמודה A")
-        print(f"יתרה {balance} בעמודה {output_col + 1}")
+        # במקום להתחיל משורה 10, נתחיל מההתחלה ונחפש תאריכים תקינים
+        for row in range(1, sheet.max_row + 1):
+            date_cell = sheet.cell(row=row, column=1).value
+            if isinstance(date_cell, str):
+                try:
+                    # מנסה להמיר לתאריך - אם מצליח, זה תאריך תקין
+                    date = datetime.strptime(date_cell, '%d/%m/%y')
+                    all_dates.add(date)
+                except ValueError:
+                    continue
         
-        try:
-            worksheet.write_datetime(next_row, 0, date, date_format)
-            worksheet.write_number(next_row, output_col, balance, number_format)
-            next_row += 1
-        except Exception as e:
-            print(f"שגיאה בכתיבה: {str(e)}")
-            raise
+        wb.close()
     
-    input_wb.close()
-    return True
+    return sorted(all_dates)
+
+def process_bank_files():
+    if not os.path.exists('output'):
+        os.makedirs('output')
+        
+    workbook = xlsxwriter.Workbook('output/output.xlsx')
+    worksheet = workbook.add_worksheet()
+    
+    try:
+        account_numbers = create_output_template(workbook, worksheet)
+        bank_files = find_bank_files()
+        
+        # קודם כל אוסף את כל התאריכים
+        all_dates = collect_all_dates(bank_files)
+        
+        # כותב את כל התאריכים לקובץ הפלט
+        date_format = workbook.add_format({'num_format': 'dd/mm/yy'})
+        number_format = workbook.add_format({'num_format': '#,##0.00'})
+        
+        # כותב כותרת לעמודת הסכום
+        worksheet.write(3, 10, 'סה"כ', workbook.add_format({
+            'bold': True,
+            'align': 'center',
+            'bg_color': '#D9D9D9'
+        }))
+        
+        # כותב את התאריכים ומכין נוסחאות סכום
+        for row, date in enumerate(all_dates, start=4):
+            worksheet.write_datetime(row, 0, date, date_format)
+            # נוסחת סכום: מעמודה B עד J
+            sum_formula = f'=SUM(B{row+1}:J{row+1})'
+            worksheet.write_formula(row, 10, sum_formula, number_format)
+        
+        # עכשיו עובר על כל קובץ ומעדכן את היתרות במקומות המתאימים
+        for input_file in bank_files:
+            try:
+                print(f"\nמעבד קובץ: {os.path.basename(input_file)}")
+                
+                wb = openpyxl.load_workbook(input_file)
+                sheet = wb.active
+                
+                print("מחפש מספר חשבון...")
+                account_number = find_account_number(sheet)
+                print("מחפש עמודת פלט מתאימה...")
+                output_col = find_output_column(account_number, account_numbers)
+                
+                print(f"אוסף יתרות לחשבון {account_number}...")
+                balances = {}
+                for row in range(1, sheet.max_row + 1):
+                    date_str = sheet.cell(row=row, column=1).value
+                    balance = sheet.cell(row=row, column=10).value
+                    if isinstance(date_str, str) and isinstance(balance, (int, float)):
+                        try:
+                            date = datetime.strptime(date_str, '%d/%m/%y')
+                            balances[date] = balance
+                            print(f"נמצאה יתרה {balance} לתאריך {date}")
+                        except ValueError:
+                            continue
+                
+                print(f"נמצאו {len(balances)} יתרות")
+                
+                # מעדכן את היתרות בקובץ הפלט
+                for row, date in enumerate(all_dates, start=4):
+                    if date in balances:
+                        worksheet.write_number(row, output_col, balances[date], number_format)
+                
+                wb.close()
+                
+            except Exception as e:
+                print(f"✗ שגיאה בקובץ {os.path.basename(input_file)}:")
+                print(f"  פירוט: {str(e)}")
+    finally:
+        workbook.close()
 
 def find_bank_files():
     """מוצא את כל קבצי הבנק בתיקיית bank_statements"""
@@ -151,31 +207,12 @@ def find_bank_files():
         print("✗ תיקיית bank_statements לא קיימת")
         return []
     
-    files = [f for f in os.listdir(bank_dir) if f.endswith('.xlsx')]
+    # מסנן קבצים זמניים שמתחילים ב-~$
+    files = [f for f in os.listdir(bank_dir) 
+             if f.endswith('.xlsx') and not f.startswith('~$')]
     print(f"נמצאו {len(files)} קבצים: {files}")
     
     return [os.path.join(bank_dir, f) for f in files]
-
-def process_bank_files():
-    # יצירת תיקיית output אם לא קיימת
-    if not os.path.exists('output'):
-        os.makedirs('output')
-        
-    workbook = xlsxwriter.Workbook('output/output.xlsx')
-    worksheet = workbook.add_worksheet()
-    
-    try:
-        account_numbers = create_output_template(workbook, worksheet)
-        
-        for input_file in find_bank_files():
-            try:
-                print(f"\nמעבד קובץ: {os.path.basename(input_file)}")
-                process_bank_file(input_file, worksheet, account_numbers, workbook)
-            except Exception as e:
-                print(f"✗ שגיאה בקובץ {os.path.basename(input_file)}:")
-                print(f"  פירוט: {str(e)}")
-    finally:
-        workbook.close()
 
 def main():
     process_bank_files()
